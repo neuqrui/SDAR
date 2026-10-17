@@ -101,7 +101,7 @@ for eval_experiment_name in "${eval_experiment_names[@]}"; do
     env.max_steps=50 \
     env.rollout.n=$group_size \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console','swanlab'] \
     trainer.project_name=$project_name \
     trainer.experiment_name="${eval_experiment_name}_seed${seed}" \
     trainer.n_gpus_per_node=4 \

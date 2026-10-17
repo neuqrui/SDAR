@@ -149,10 +149,23 @@ class TaskRunner:
         else:
             raise NotImplementedError
 
-        reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
+        reward_kwargs = dict(
+            normalize_by_length=False,
+            success_length_bonus_coef=config.reward_model.get("success_length_bonus_coef", 0.0),
+            success_length_max_steps=config.reward_model.get("success_length_max_steps", 15),
+            success_length_pairwise_tau=config.reward_model.get("success_length_pairwise_tau", 0.0),
+        )
+        reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, **reward_kwargs)
 
-        # Note that we always use function-based RM for validation
-        val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
+        # Validation keeps the original episode reward. Length terms are training-only.
+        val_reward_fn = reward_manager_cls(
+            tokenizer=tokenizer,
+            num_examine=1,
+            normalize_by_length=False,
+            success_length_bonus_coef=0.0,
+            success_length_max_steps=config.reward_model.get("success_length_max_steps", 15),
+            success_length_pairwise_tau=0.0,
+        )
 
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 

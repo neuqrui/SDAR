@@ -420,6 +420,8 @@ class RayPPOTrainer:
         self.envs = envs
         self.val_envs = val_envs
         self.traj_collector = traj_collector
+        # Successful episode length of each task, used when a group has one success.
+        self._success_length_baseline = {}
 
         self.hybrid_engine = config.actor_rollout_ref.hybrid_engine
         assert self.hybrid_engine, "Currently, only support hybrid engine"
@@ -664,6 +666,49 @@ class RayPPOTrainer:
 
         print(f"Dumped generations to {filename}")
 
+    def _dump_train_trajectories(self, batch, reward_extra_infos_dict, is_last_step):
+        """Legacy flat jsonl plus AgentOPSD-style episode / teacher dumps."""
+        rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
+        traj_cfg = self.config.trainer.get("trajectory_dump", {}) or {}
+        dump_freq = int(traj_cfg.get("freq", 1) or 1)
+        if not rollout_data_dir:
+            return
+        if not (is_last_step or self.global_steps % max(dump_freq, 1) == 0):
+            return
+
+        inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
+        outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
+        scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
+        self._dump_generations(
+            inputs=inputs,
+            outputs=outputs,
+            scores=scores,
+            reward_extra_infos_dict=reward_extra_infos_dict,
+            dump_path=os.path.join(rollout_data_dir, "flat_steps"),
+        )
+        from verl.utils.trajectory_dump import dump_agent_trajectories, dump_teacher_examples
+
+        max_eps = int(traj_cfg.get("max_episodes", 2))
+        dump_agent_trajectories(
+            tokenizer=self.tokenizer,
+            batch=batch,
+            dump_path=os.path.join(rollout_data_dir, "episodes"),
+            global_step=self.global_steps,
+            split="train",
+            max_episodes=max_eps,
+            write_markdown=bool(traj_cfg.get("write_markdown", True)),
+            write_html=bool(traj_cfg.get("write_html", True)),
+        )
+        dump_teacher_examples(
+            tokenizer=self.tokenizer,
+            batch=batch,
+            dump_path=os.path.join(rollout_data_dir, "teacher"),
+            global_step=self.global_steps,
+            split="train",
+            max_examples=int(traj_cfg.get("max_teacher_examples", max_eps)),
+            write_markdown=bool(traj_cfg.get("write_markdown", True)),
+        )
+
     def _maybe_log_val_generations(self, inputs, outputs, scores):
         """Log a table of validation samples to the configured logger (wandb or swanlab)"""
 
@@ -692,6 +737,7 @@ class RayPPOTrainer:
         reward_tensor_lst = []
         data_source_lst = []
         tool_calling_list = []
+        episode_length_list = []
         traj_uid_list = []
         success_rate_dict = {}
 
@@ -699,6 +745,7 @@ class RayPPOTrainer:
         sample_inputs = []
         sample_outputs = []
         sample_scores = []
+        dumped_val_traj = False
 
         for test_data in self.val_dataloader:
             test_batch = DataProto.from_single_dict(test_data)
@@ -770,9 +817,30 @@ class RayPPOTrainer:
             scores = reward_tensor.sum(-1).cpu().tolist()
             sample_scores.extend(scores)
 
+            val_data_dir = self.config.trainer.get("validation_data_dir", None)
+            if val_data_dir and not dumped_val_traj:
+                traj_cfg = self.config.trainer.get("trajectory_dump", {}) or {}
+                dump_batch = test_batch
+                if "token_level_scores" not in dump_batch.batch:
+                    dump_batch.batch["token_level_scores"] = reward_tensor
+                from verl.utils.trajectory_dump import dump_agent_trajectories
+
+                dump_agent_trajectories(
+                    tokenizer=self.tokenizer,
+                    batch=dump_batch,
+                    dump_path=os.path.join(val_data_dir, "episodes"),
+                    global_step=self.global_steps,
+                    split="val",
+                    max_episodes=int(traj_cfg.get("max_episodes", 16)),
+                    write_markdown=bool(traj_cfg.get("write_markdown", True)),
+                    write_html=bool(traj_cfg.get("write_html", True)),
+                )
+                dumped_val_traj = True
+
             reward_tensor_lst.append(reward_tensor)
             data_source_lst.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor.shape[0]))
             tool_calling_list.append(test_output_gen_batch.non_tensor_batch['tool_callings'])
+            episode_length_list.append(test_output_gen_batch.non_tensor_batch['episode_lengths'])
             traj_uid_list.append(test_output_gen_batch.non_tensor_batch['traj_uid'])
             # success rate
             for k in test_batch.non_tensor_batch.keys():
@@ -789,6 +857,7 @@ class RayPPOTrainer:
         reward_tensor = torch.cat(reward_tensor_lst, dim=0).sum(-1).cpu()  # (batch_size,)
         data_sources = np.concatenate(data_source_lst, axis=0)
         tool_callings = np.concatenate(tool_calling_list, axis=0)
+        episode_lengths = np.concatenate(episode_length_list, axis=0)
         traj_uids = np.concatenate(traj_uid_list, axis=0)
         success_rate = {k: np.mean(v) for k, v in success_rate_dict.items()}
 
@@ -806,6 +875,7 @@ class RayPPOTrainer:
         unique_traj_uid, unique_idx = np.unique(traj_uids, return_index=True)
         unique_data_sources = data_sources[unique_idx]
         unique_tool_callings = tool_callings[unique_idx]
+        unique_episode_lengths = episode_lengths[unique_idx]
 
         for i in range(unique_tool_callings.shape[0]):
             data_source = unique_data_sources[i]
@@ -819,6 +889,9 @@ class RayPPOTrainer:
 
         for data_source, tool_calls in data_source_tool_calling.items():
             metric_dict[f'val/{data_source}/tool_call_count/mean'] = np.mean(tool_calls)
+
+        # One value per trajectory. Rows are repeated once per environment step.
+        metric_dict['val/response_steps/mean'] = float(np.mean(unique_episode_lengths))
             # metric_dict[f'val/{data_source}/tool_call_count/max'] = np.max(tool_calls)
             # metric_dict[f'val/{data_source}/tool_call_count/min'] = np.min(tool_calls)
 
@@ -955,7 +1028,57 @@ class RayPPOTrainer:
         with open(local_latest_checkpointed_iteration, "w") as f:
             f.write(str(self.global_steps))
 
+    def _parse_global_step_from_ckpt_path(self, ckpt_path: str) -> int:
+        """Require basename exactly ``global_step_<int>`` (no extra suffix)."""
+        import re
+
+        base = os.path.basename(os.path.abspath(ckpt_path).rstrip("/"))
+        match = re.fullmatch(r"global_step_(\d+)", base)
+        if match is None:
+            raise ValueError(
+                "trainer.val_idle_align=True requires the checkpoint path to end with "
+                f"'global_step_<int>', got basename {base!r} from {ckpt_path!r}"
+            )
+        return int(match.group(1))
+
+    def _val_idle_align_count(self, resume_step: int) -> int:
+        test_freq = int(self.config.trainer.test_freq)
+        if test_freq <= 0:
+            raise ValueError(
+                f"trainer.val_idle_align=True requires trainer.test_freq > 0, got {test_freq}"
+            )
+        include_before = bool(self.config.trainer.get("val_idle_align_include_before_train", True))
+        return (1 if include_before else 0) + (resume_step // test_freq)
+
+    def _maybe_idle_align_val_envs(self):
+        """Dry-reset val envs so rotating game pools match uninterrupted validation."""
+        if not self.config.trainer.get("val_idle_align", False):
+            return
+        ckpt_path = getattr(self, "resume_ckpt_folder", None)
+        if not ckpt_path:
+            raise ValueError(
+                "trainer.val_idle_align=True but no checkpoint was loaded "
+                "(resume_mode=disable, or auto found nothing). "
+                "Use resume_mode=resume_path|auto with a global_step_<int> ckpt."
+            )
+        if self.val_envs is None:
+            raise ValueError("trainer.val_idle_align=True but val_envs is None")
+
+        resume_step = self._parse_global_step_from_ckpt_path(ckpt_path)
+        n_idle = self._val_idle_align_count(resume_step)
+        print(
+            f"[val_idle_align] ckpt={ckpt_path} step={resume_step} "
+            f"test_freq={self.config.trainer.test_freq} "
+            f"include_before_train={self.config.trainer.get('val_idle_align_include_before_train', True)} "
+            f"-> idle reset val_envs {n_idle} times"
+        )
+        for i in range(n_idle):
+            self.val_envs.reset({})
+            if (i + 1) % 5 == 0 or (i + 1) == n_idle:
+                print(f"[val_idle_align] reset progress {i + 1}/{n_idle}")
+
     def _load_checkpoint(self):
+        self.resume_ckpt_folder = None
         if self.config.trainer.resume_mode == "disable":
             return 0
 
@@ -983,8 +1106,10 @@ class RayPPOTrainer:
                     working_dir = os.getcwd()
                     global_step_folder = os.path.join(working_dir, global_step_folder)
         print(f"Load from checkpoint folder: {global_step_folder}")
-        # set global step
-        self.global_steps = int(global_step_folder.split("global_step_")[-1])
+        self.resume_ckpt_folder = global_step_folder
+        # set global step; allow a suffix such as global_step_30_best
+        step_suffix = global_step_folder.rstrip("/").split("global_step_")[-1]
+        self.global_steps = int(step_suffix.split("_")[0])
 
         print(f"Setting global step to {self.global_steps}")
         print(f"Resuming from {global_step_folder}")
@@ -1041,6 +1166,7 @@ class RayPPOTrainer:
 
         # load checkpoint before doing anything
         self._load_checkpoint()
+        self._maybe_idle_align_val_envs()
 
         # perform validation before training
         # currently, we only support validation using the reward_function.
@@ -1249,6 +1375,14 @@ class RayPPOTrainer:
                             gigpo_enable_similarity= self.config.algorithm.gigpo.enable_similarity,
                             gigpo_similarity_thresh=self.config.algorithm.gigpo.similarity_thresh,
                         )
+                        length_adv_coef = float(self.config.reward_model.get("success_length_adv_coef", 0.0))
+                        if length_adv_coef > 0 and self.config.algorithm.adv_estimator == AdvantageEstimator.GRPO:
+                            length_metrics = core_algos.apply_task_relative_length_advantage(
+                                batch,
+                                coef=length_adv_coef,
+                                baseline=self._success_length_baseline,
+                            )
+                            metrics.update(length_metrics)
 
                     # update critic
                     if self.use_critic:
@@ -1267,20 +1401,8 @@ class RayPPOTrainer:
                         metrics.update(actor_output_metrics)
 
                     # Log rollout generations if enabled
-                    rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
-                    if rollout_data_dir:
-                        with _timer("dump_rollout_generations", timing_raw):
-                            print(batch.batch.keys())
-                            inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
-                            outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
-                            scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
-                            self._dump_generations(
-                                inputs=inputs,
-                                outputs=outputs,
-                                scores=scores,
-                                reward_extra_infos_dict=reward_extra_infos_dict,
-                                dump_path=rollout_data_dir,
-                            )
+                    with _timer("dump_rollout_generations", timing_raw):
+                        self._dump_train_trajectories(batch, reward_extra_infos_dict, is_last_step)
 
                     # validate
                     test_start_step = self.config.trainer.get("test_start_step", 0)

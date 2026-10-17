@@ -387,8 +387,8 @@ class WebshopEnvironmentManager(EnvironmentManagerBase):
         self.memory = SimpleMemory()
         super().__init__(envs, projection_f, config)
     
-    def reset(self, kwargs) -> Dict[str, Any]:
-        obs, infos = self.envs.reset()
+    def reset(self, kwargs, indices=None) -> Dict[str, Any]:
+        obs, infos = self.envs.reset(indices=indices)
         self.tasks = self.extract_task(obs)
         obs = self.format_obs(obs)
         # infos = [None] * self.envs.num_envs

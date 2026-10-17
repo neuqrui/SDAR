@@ -24,7 +24,7 @@ class GRPOOPDTrainer(SkillSDRayTrainer):
         return self.opd_coef
 
     def _compute_teacher_log_probs(self, batch: DataProto) -> torch.Tensor:
-        teacher_batch = build_teacher_batch(
+        teacher_batch, skill_meta = build_teacher_batch(
             batch=batch,
             skill_provider=self.skill_provider,
             tokenizer=self.tokenizer,
@@ -34,4 +34,6 @@ class GRPOOPDTrainer(SkillSDRayTrainer):
         if not hasattr(self, "teacher_policy_wg"):
             raise RuntimeError("GRPOOPDTrainer requires a framework-managed teacher policy worker")
         teacher_output = self.teacher_policy_wg.compute_ref_log_prob(teacher_batch)
+        for k, v in skill_meta.items():
+            batch.non_tensor_batch[k] = v
         return teacher_output.batch["ref_log_prob"]

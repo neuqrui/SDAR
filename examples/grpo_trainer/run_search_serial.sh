@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TASK_KIND=SEARCH
+source "$PROJECT_ROOT/examples/_sdar_env.sh"
+
 # Serial training: grpo search on 3B -> 7B -> 1.7B
 # Only the first (3B) run does val_before_train
 set -x

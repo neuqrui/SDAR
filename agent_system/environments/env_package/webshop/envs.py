@@ -172,9 +172,14 @@ class WebshopMultiProcessEnv(gym.Env):
 
         return obs_list, reward_list, done_list, info_list
 
-    def reset(self):
-        idx = self._rng.choice(self.goal_idxs, size=self.env_num, replace=False)
-        idx = np.repeat(idx, self.group_n).tolist()
+    def reset(self, indices=None):
+        if indices is None:
+            idx = self._rng.choice(self.goal_idxs, size=self.env_num, replace=False)
+        else:
+            idx = np.asarray(indices)
+            if len(idx) != self.env_num:
+                raise ValueError(f"Expected {self.env_num} goal indices, got {len(idx)}")
+        idx = [int(i) for i in np.repeat(idx, self.group_n)]
 
         # Send reset commands to all workers
         futures = []

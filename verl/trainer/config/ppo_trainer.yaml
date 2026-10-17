@@ -61,6 +61,12 @@ actor_rollout_ref:
     use_torch_compile: True # False to disable torch compile
     kl_loss_coef: 0.001 # for grpo
     kl_loss_type: low_var_kl # for grpo
+    # Sampled-token OPSD KL (Thinking Machines style). Off by default so existing
+    # scripts keep SDAR/GRPO objectives; set use_opsd_kl_loss=True to train with it.
+    use_opsd_kl_loss: False
+    log_opsd_kl_reference: True  # log sampled-token KL when teacher_log_probs exist
+    opsd_kl_loss_coef: 0.1
+    opsd_kl_objective: sampled_kl  # sampled_kl | reverse_kl
     ppo_epochs: 1
     shuffle: False
     ulysses_sequence_parallel_size: 1 # sp size
@@ -223,6 +229,16 @@ reward_model:
   use_dynamic_bsz: ${critic.use_dynamic_bsz}
   forward_max_token_len_per_gpu: ${critic.forward_max_token_len_per_gpu}
   reward_manager: episode
+  # Added only when episode reward > 0. Score += coef * max(0, (max_steps - steps) / max_steps).
+  # coef=0 leaves failed and successful rewards unchanged.
+  success_length_bonus_coef: 0.0
+  success_length_max_steps: 15
+  # Soft pairwise efficiency among successes in one GRPO group. tau=0 disables it.
+  # Score is 10 + 5 * b_i on successes and 0 on failures, then standard GRPO.
+  success_length_pairwise_tau: 0.0
+  # Training-only length advantage added after GRPO normalization. Outcome reward stays unchanged.
+  # Scale is [-coef, coef]. 0 disables it.
+  success_length_adv_coef: 0.0
   launch_reward_fn_async: False # custom reward function executed async on CPU, during log_prob
   sandbox_fusion:
     url: null # faas url to run code in cloud sandbox
@@ -255,6 +271,13 @@ algorithm:
   filter_groups: # DAPO from https://arxiv.org/abs/2503.14476
     enable: False
     max_num_gen_batches: 10
+  opsd_kl:
+    objective: sampled_kl  # sampled_kl | reverse_kl
+    opsd_coef: 0.1         # used only when actor.use_opsd_kl_loss=True
+    gate: none             # none | sdar-gate (alias sdar) | clip | tanh
+    gate_beta: 5.0         # sdar-gate: sigmoid(gate_beta * stopgrad(log π_T - log π_S))
+    advantage_clip: 10.0   # clip/tanh bound c on stopgrad(log π_T - log π_S)
+    log_reference: True    # log sampled-token KL as a reference metric (no grad)
 
 trainer:
   balance_batch: True
@@ -264,8 +287,17 @@ trainer:
   experiment_name: gsm8k
   logger: [ 'console', 'wandb' ]
   log_val_generations: 0
-  rollout_data_dir: null # directory for logging the rollout data, no dump if null
+  # Directory for logging the rollout data; no dump if null.
+  # When set, also writes human-readable episode dumps under
+  #   <rollout_data_dir>/episodes/step_XXXXXX_train/{episodes.jsonl,index.md,md/,html/}
+  rollout_data_dir: null
   validation_data_dir: null # directory for logging the validation data, no dump if null
+  trajectory_dump:
+    freq: 1            # dump every N training steps (when rollout_data_dir is set)
+    max_episodes: 2    # subsample episodes per dump (keeps low/high reward contrast)
+    max_teacher_examples: 2  # teacher forward + selected skills examples per dump
+    write_markdown: true
+    write_html: true
   nnodes: 1
   n_gpus_per_node: 8
   save_freq: -1
@@ -273,6 +305,11 @@ trainer:
   resume_mode: auto # or disable or resume_path if resume_from_path is set
   resume_from_path: null
   val_before_train: True
+  # When True, dry-reset val_envs so AlfWorld/WebShop game pointers match an
+  # uninterrupted run that validated at step 0 (optional) and every test_freq.
+  # Requires a ckpt path ending in global_step_<int>; otherwise raises.
+  val_idle_align: False
+  val_idle_align_include_before_train: True
   val_only: False
   test_freq: -1
   critic_warmup: 0
@@ -293,6 +330,7 @@ env:
   env_name: alfworld/AlfredTWEnv
   seed: 0
   max_steps: 50
+  val_max_steps: null # null: validation uses max_steps
   history_length: 2
   resources_per_worker: # resources for each env worker
     num_cpus: 0.1

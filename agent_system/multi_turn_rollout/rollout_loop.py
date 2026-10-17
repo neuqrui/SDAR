@@ -46,6 +46,14 @@ class TrajectoryCollector:
         self.tokenizer = tokenizer
         self.processor = processor
 
+    def _episode_max_steps(self, is_train: bool) -> int:
+        """Training uses env.max_steps. Validation uses env.val_max_steps when set."""
+        if not is_train:
+            val_max_steps = self.config.env.get("val_max_steps", None)
+            if val_max_steps is not None:
+                return int(val_max_steps)
+        return int(self.config.env.max_steps)
+
     def preprocess_single_sample(
         self,
         item: int,
@@ -302,6 +310,7 @@ class TrajectoryCollector:
             gen_batch: DataProto, 
             actor_rollout_wg, 
             envs: EnvironmentManagerBase,
+            max_steps: int = None,
             ) -> DataProto:
         """
         Collects trajectories through parallel agent-environment agent_loop.
@@ -345,7 +354,9 @@ class TrajectoryCollector:
         episode_rewards = np.zeros(batch_size, dtype=np.float32)
         tool_callings = np.zeros(batch_size, dtype=np.float32)
         # Trajectory collection loop
-        for _step in range(self.config.env.max_steps):
+        if max_steps is None:
+            max_steps = int(self.config.env.max_steps)
+        for _step in range(max_steps):
             active_masks = np.logical_not(is_done)
 
             obs_input = obs
@@ -532,12 +543,13 @@ class TrajectoryCollector:
                 envs=envs,
             )
         else:
-            # Vanilla Sampling   
+            # Vanilla Sampling
             total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings = \
                 self.vanilla_multi_turn_loop(
                 gen_batch=gen_batch,
                 actor_rollout_wg=actor_rollout_wg,
                 envs=envs,
+                max_steps=self._episode_max_steps(is_train),
             )
         assert len(total_batch_list) == len(total_episode_rewards)
         assert len(total_batch_list) == len(total_episode_lengths)

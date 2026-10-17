@@ -66,7 +66,7 @@ python3 -m verl.trainer.main_ppo \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.resume_mode='auto' \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console','swanlab'] \
     trainer.project_name='verl_agent_alfworld' \
     trainer.experiment_name='gspo_qwen2.5_1.5b' \
     trainer.n_gpus_per_node=2 \

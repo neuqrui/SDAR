@@ -1,4 +1,9 @@
 set -x
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TASK_KIND=ALFWORLD
+source "$PROJECT_ROOT/examples/_sdar_env.sh"
+
 ENGINE=${1:-vllm}
 
 num_cpus_per_env_worker=0.1
@@ -12,19 +17,19 @@ train_data_size=16
 val_data_size=128
 group_size=8
 experiment_name="opsd_qwen2.5_7b_coef${sdar_coef}_beta${gate_beta}_skillall${skill_all}"
-export ALFWORLD_DATA=$HOME/data/alfworld
 
-export WANDB_API_KEY=your_key_here
+# wandb replaced by swanlab; see .env SWANLAB_API_KEY
 
 python3 -m examples.data_preprocess.prepare \
+    --local_dir "$DATA_ROOT/verl-agent/" \
     --mode 'text' \
     --train_data_size $train_data_size \
     --val_data_size $val_data_size
 
 python3 -m verl.trainer.main_sdar \
     algorithm.adv_estimator=grpo \
-    data.train_files=$HOME/data/verl-agent/text/train.parquet \
-    data.val_files=$HOME/data/verl-agent/text/test.parquet \
+    data.train_files=$DATA_ROOT/verl-agent/text/train.parquet \
+    data.val_files=$DATA_ROOT/verl-agent/text/test.parquet \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
     data.max_prompt_length=2048 \
@@ -68,7 +73,7 @@ python3 -m verl.trainer.main_sdar \
     env.rollout.n=$group_size \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console','swanlab'] \
     trainer.project_name='verl_agent_alfworld' \
     trainer.experiment_name=$experiment_name \
     trainer.n_gpus_per_node=8 \

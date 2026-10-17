@@ -1,4 +1,10 @@
-save_path=$HOME/data/searchR1
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+TASK_KIND=RETRIEVER
+source "$PROJECT_ROOT/examples/_sdar_env.sh"
+
+save_path="${SEARCH_DATA_ROOT:-$HOME/data/searchR1}"
 
 index_file=$save_path/e5_Flat.index
 corpus_file=$save_path/wiki-18.jsonl
@@ -12,4 +18,4 @@ python examples/search/retriever/retrieval_server.py \
   --retriever_name $retriever_name \
   --retriever_model $retriever_path \
   --faiss_gpu \
-  --port 8000 \
+  --port 8000

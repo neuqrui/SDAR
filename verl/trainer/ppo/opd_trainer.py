@@ -65,7 +65,7 @@ class OPDTrainer(RayPPOTrainer):
             raise ValueError("algorithm.opd.opd_coef must be nonnegative")
 
     def _compute_teacher_log_probs(self, batch: DataProto) -> torch.Tensor:
-        teacher_batch = build_teacher_batch(
+        teacher_batch, skill_meta = build_teacher_batch(
             batch=batch,
             skill_provider=self.skill_provider,
             tokenizer=self.tokenizer,
@@ -75,6 +75,8 @@ class OPDTrainer(RayPPOTrainer):
         if not hasattr(self, "teacher_policy_wg"):
             raise RuntimeError("OPDTrainer requires a framework-managed teacher policy worker")
         teacher_output = self.teacher_policy_wg.compute_ref_log_prob(teacher_batch)
+        for k, v in skill_meta.items():
+            batch.non_tensor_batch[k] = v
         return teacher_output.batch["ref_log_prob"]
 
     def fit(self):
@@ -93,6 +95,7 @@ class OPDTrainer(RayPPOTrainer):
 
         self.global_steps = 0
         self._load_checkpoint()
+        self._maybe_idle_align_val_envs()
 
         if self.val_reward_fn is not None and self.config.trainer.get("val_before_train", True):
             val_metrics = self._validate()

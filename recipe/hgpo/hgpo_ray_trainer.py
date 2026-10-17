@@ -711,6 +711,7 @@ class RayPPOTrainer:
         reward_tensor_lst = []
         data_source_lst = []
         tool_calling_list = []
+        episode_length_list = []
         traj_uid_list = []
         success_rate_dict = {}
 
@@ -792,6 +793,7 @@ class RayPPOTrainer:
             reward_tensor_lst.append(reward_tensor)
             data_source_lst.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor.shape[0]))
             tool_calling_list.append(test_output_gen_batch.non_tensor_batch['tool_callings'])
+            episode_length_list.append(test_output_gen_batch.non_tensor_batch['episode_lengths'])
             traj_uid_list.append(test_output_gen_batch.non_tensor_batch['traj_uid'])
             # success rate
             for k in test_batch.non_tensor_batch.keys():
@@ -808,6 +810,7 @@ class RayPPOTrainer:
         reward_tensor = torch.cat(reward_tensor_lst, dim=0).sum(-1).cpu()  # (batch_size,)
         data_sources = np.concatenate(data_source_lst, axis=0)
         tool_callings = np.concatenate(tool_calling_list, axis=0)
+        episode_lengths = np.concatenate(episode_length_list, axis=0)
         traj_uids = np.concatenate(traj_uid_list, axis=0)
         success_rate = {k: np.mean(v) for k, v in success_rate_dict.items()}
 
@@ -825,6 +828,7 @@ class RayPPOTrainer:
         unique_traj_uid, unique_idx = np.unique(traj_uids, return_index=True)
         unique_data_sources = data_sources[unique_idx]
         unique_tool_callings = tool_callings[unique_idx]
+        unique_episode_lengths = episode_lengths[unique_idx]
 
         for i in range(unique_tool_callings.shape[0]):
             data_source = unique_data_sources[i]
@@ -838,6 +842,9 @@ class RayPPOTrainer:
 
         for data_source, tool_calls in data_source_tool_calling.items():
             metric_dict[f'val/{data_source}/tool_call_count/mean'] = np.mean(tool_calls)
+
+        # One value per trajectory. Rows are repeated once per environment step.
+        metric_dict['val/response_steps/mean'] = float(np.mean(unique_episode_lengths))
             # metric_dict[f'val/{data_source}/tool_call_count/max'] = np.max(tool_calls)
             # metric_dict[f'val/{data_source}/tool_call_count/min'] = np.min(tool_calls)
 

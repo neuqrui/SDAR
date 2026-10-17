@@ -158,6 +158,8 @@ class SDARTaskRunner:
         skills_dir = sdar_cfg.get("skills_dir", "skills/alfworld")
         skill_all = sdar_cfg.get("skill_all", False)
         skill_provider = SkillProvider(skills_dir=skills_dir, skill_all=skill_all)
+        skill_source = str(sdar_cfg.get("skill_source", "skill_bank"))
+        print(f"[SDAR] skill_source: {skill_source}")
         print(f"[SDAR] Loaded skills from {skills_dir}")
         print(f"[SDAR] Available skills: {list(skill_provider.skill_contents.keys())}")
         print(f"[SDAR] Task-to-skill mapping: {skill_provider.task_to_skill}")

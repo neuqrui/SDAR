@@ -1,7 +1,12 @@
 set -x
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TASK_KIND=SEARCH
+source "$PROJECT_ROOT/examples/_sdar_env.sh"
+
 ENGINE=${1:-vllm}
 
-export WANDB_API_KEY=your_key_here
+# wandb replaced by swanlab; see .env SWANLAB_API_KEY
 export HIGHLIGHT_CONFIGS='<search>:0,0,255;</search>:0,0,255;<information>:255,0,0;</information>:255,0,0'
 
 # OPSD hyperparameters (SDAR without GRPO loss)
@@ -15,8 +20,8 @@ train_data_size=128
 val_data_size=512
 group_size=8
 
-TRAIN_DATA="$HOME/data/searchR1_processed_direct/train.parquet"
-VAL_DATA="$HOME/data/searchR1_processed_direct/test.parquet"
+TRAIN_DATA="$SEARCH_PROCESSED_ROOT/train.parquet"
+VAL_DATA="$SEARCH_PROCESSED_ROOT/test.parquet"
 
 python3 -m verl.trainer.main_sdar \
     algorithm.adv_estimator=grpo \
@@ -65,7 +70,7 @@ python3 -m verl.trainer.main_sdar \
     env.history_length=4 \
     env.search.search_url='http://0.0.0.0:8000/retrieve' \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console','swanlab'] \
     trainer.project_name='verl_agent_search' \
     trainer.experiment_name=$experiment_name \
     trainer.n_gpus_per_node=4 \

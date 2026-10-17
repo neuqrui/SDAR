@@ -623,7 +623,9 @@ class ActorRolloutRefWorker(Worker):
 
             lr = self.actor_lr_scheduler.get_last_lr()[0]
             metrics["actor/lr"] = lr
-            self.actor_lr_scheduler.step()
+            accumulate_only = bool(data.meta_info.get("accumulate_only", False))
+            if not accumulate_only:
+                self.actor_lr_scheduler.step()
 
             # TODO: here, we should return all metrics
             output = DataProto(meta_info={"metrics": metrics})
@@ -631,10 +633,11 @@ class ActorRolloutRefWorker(Worker):
             output = self.ulysses_sharding_manager.postprocess_data(data=output)
             output = output.to("cpu")
 
-        if self._is_offload_param:
+        accumulate_only = bool(data.meta_info.get("accumulate_only", False))
+        if not accumulate_only and self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
             log_gpu_memory_usage("After offload actor model during update_actor", logger=logger)
-        if self._is_offload_optimizer:
+        if not accumulate_only and self._is_offload_optimizer:
             offload_fsdp_optimizer(optimizer=self.actor_optimizer)
             log_gpu_memory_usage("After offload actor optimizer during update_actor", logger=logger)
 
@@ -680,6 +683,38 @@ class ActorRolloutRefWorker(Worker):
         return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    def update_ana_actor(self, data: DataProto):
+        """Backward the analyzer loss. With finalize_optimizer_step, this is the single joint step."""
+
+        data = data.to(get_torch_device().current_device())
+        assert self._is_actor
+        if self._is_offload_param:
+            load_fsdp_model_to_gpu(self.actor_module_fsdp)
+        if self._is_offload_optimizer:
+            load_fsdp_optimizer(optimizer=self.actor_optimizer, device_id=get_torch_device().current_device())
+
+        with self.ulysses_sharding_manager:
+            data = self.ulysses_sharding_manager.preprocess_data(data=data)
+            with Timer(name="update_ana_policy", logger=None) as timer:
+                metrics = self.actor.update_ana_policy(data=data)
+            delta_time = timer.last
+            global_num_tokens = data.meta_info["global_token_num"]
+            estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
+            metrics["perf/mfu/actor"] = estimated_flops * self.config.actor.ppo_epochs / promised_flops / self.world_size
+            metrics["actor/lr"] = self.actor_lr_scheduler.get_last_lr()[0]
+            if bool(data.meta_info.get("finalize_optimizer_step", False)):
+                self.actor_lr_scheduler.step()
+            output = DataProto(meta_info={"metrics": metrics})
+            output = self.ulysses_sharding_manager.postprocess_data(data=output)
+            output = output.to("cpu")
+
+        if self._is_offload_param:
+            offload_fsdp_model_to_cpu(self.actor_module_fsdp)
+        if self._is_offload_optimizer:
+            offload_fsdp_optimizer(optimizer=self.actor_optimizer)
+        return output
+
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def generate_sequences(self, prompts: DataProto):
         # Support all hardwares
         prompts = prompts.to(get_torch_device().current_device())
@@ -722,9 +757,14 @@ class ActorRolloutRefWorker(Worker):
         adapter_ctx = self.actor.actor_module.disable_adapter() if is_lora else nullcontext()
         data = data.to(get_torch_device().current_device())
         # we should always recompute old_log_probs when it is HybridEngine
-        data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
-        data.meta_info["max_token_len"] = self.config.rollout.log_prob_max_token_len_per_gpu
-        data.meta_info["use_dynamic_bsz"] = self.config.rollout.log_prob_use_dynamic_bsz
+        if data.meta_info.get("ana_log_prob"):
+            data.meta_info["micro_batch_size"] = int(data.meta_info.get("ana_micro_batch_size", 1))
+            data.meta_info["max_token_len"] = int(data.meta_info.get("ana_max_token_len", 32768))
+            data.meta_info["use_dynamic_bsz"] = False
+        else:
+            data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
+            data.meta_info["max_token_len"] = self.config.rollout.log_prob_max_token_len_per_gpu
+            data.meta_info["use_dynamic_bsz"] = self.config.rollout.log_prob_use_dynamic_bsz
         data.meta_info["temperature"] = self.config.rollout.temperature
         # perform recompute log_prob
         with self.ulysses_sharding_manager:

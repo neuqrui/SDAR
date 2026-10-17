@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TASK_KIND=ALFWORLD
+source "$PROJECT_ROOT/examples/_sdar_env.sh"
+
 ENGINE=${ENGINE:-vllm}
 if [[ $# -gt 0 && "$1" != *=* ]]; then
     ENGINE=$1
@@ -11,7 +16,7 @@ fi
 : "${TEACHER_PERFORMANCE:?Set TEACHER_PERFORMANCE to the teacher validation success rate}"
 
 MODEL_PATH=${MODEL_PATH:-Qwen/Qwen2.5-3B-Instruct}
-DATA_ROOT=${DATA_ROOT:-$HOME/data/verl-agent}
+DATA_ROOT=${DATA_ROOT:-$DATA_ROOT/verl-agent}
 DATA_DIR=${DATA_DIR:-$DATA_ROOT/text}
 OPD_COEF=${OPD_COEF:-0.01}
 RETIREMENT_WINDOW_SIZE=${RETIREMENT_WINDOW_SIZE:-5}
@@ -35,6 +40,7 @@ if [[ -z "${ALFWORLD_DATA:-}" ]]; then
 fi
 
 python3 -m examples.data_preprocess.prepare \
+    --local_dir "$DATA_ROOT/verl-agent/" \
     --mode text \
     --local_dir "$DATA_ROOT" \
     --train_data_size 16 \

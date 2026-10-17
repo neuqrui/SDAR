@@ -97,7 +97,7 @@ for eval_experiment_name in "${eval_experiment_names[@]}"; do
         env.max_steps=$step_length \
         env.rollout.n=$group_size \
         trainer.critic_warmup=0 \
-        trainer.logger=['console','wandb'] \
+        trainer.logger=['console','swanlab'] \
         trainer.project_name="qwen2.5_7b_webshop_eval" \
         trainer.experiment_name="${eval_experiment_name}_seed${seed}" \
         trainer.n_gpus_per_node=4 \

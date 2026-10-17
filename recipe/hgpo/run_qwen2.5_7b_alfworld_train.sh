@@ -74,7 +74,7 @@ python3 -m verl.trainer.main_ppo \
     env.max_steps=50 \
     env.rollout.n=$group_size \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console','swanlab'] \
     trainer.project_name=$project_name \
     trainer.experiment_name=$experiment_name \
     trainer.n_gpus_per_node=4 \

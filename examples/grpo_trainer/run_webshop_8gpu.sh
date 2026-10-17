@@ -1,5 +1,10 @@
 set -x
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TASK_KIND=WEBSHOP
+source "$PROJECT_ROOT/examples/_sdar_env.sh"
+
 # Clean up stale Ray processes and GPU memory before starting
 ray stop --force 2>/dev/null
 pkill -f "ray::" 2>/dev/null
@@ -29,18 +34,19 @@ group_size=8
 export http_proxy=http://10.217.142.137:8080
 
 export https_proxy=http://10.217.142.137:8080
-export WANDB_API_KEY=your_key_here
+# wandb replaced by swanlab; see .env SWANLAB_API_KEY
 
 # We only use data preparation to indicate the modality and the data size.
 python3 -m examples.data_preprocess.prepare \
+    --local_dir "$DATA_ROOT/verl-agent/" \
     --mode 'text' \
     --train_data_size $train_data_size \
     --val_data_size $val_data_size
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
-    data.train_files=$HOME/data/verl-agent/text/train.parquet \
-    data.val_files=$HOME/data/verl-agent/text/test.parquet \
+    data.train_files=$DATA_ROOT/verl-agent/text/train.parquet \
+    data.val_files=$DATA_ROOT/verl-agent/text/test.parquet \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
     data.max_prompt_length=4096 \
@@ -48,7 +54,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen2.5-3B-Instruct \
+    actor_rollout_ref.model.path=$MODEL_PATH \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.ppo_mini_batch_size=64 \
@@ -79,7 +85,7 @@ python3 -m verl.trainer.main_ppo \
     env.rollout.n=$group_size \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console','swanlab'] \
     trainer.project_name='verl_agent_webshopv1' \
     trainer.experiment_name='grpo_qwen2.5_3b' \
     trainer.n_gpus_per_node=8 \

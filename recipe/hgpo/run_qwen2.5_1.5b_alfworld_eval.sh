@@ -98,7 +98,7 @@ for eval_experiment_name in "${eval_experiment_names[@]}"; do
             env.max_steps=50 \
             env.rollout.n=$group_size \
             trainer.critic_warmup=0 \
-            trainer.logger=['console','wandb'] \
+            trainer.logger=['console','swanlab'] \
             trainer.project_name="qwen2.5_1.5b_alfworld_eval" \
             trainer.experiment_name="${eval_experiment_name}_seed${seed}_eval_out${eval_out}" \
             trainer.n_gpus_per_node=2 \

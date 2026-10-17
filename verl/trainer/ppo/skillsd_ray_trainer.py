@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from agent_system.multi_turn_rollout import adjust_batch
 from verl import DataProto
+from verl.trainer.ppo import core_algos
 from verl.trainer.ppo.core_algos import agg_loss
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
@@ -24,6 +25,7 @@ from verl.trainer.ppo.metric_utils import (
     compute_timing_metrics,
 )
 from verl.trainer.ppo.ray_trainer import (
+    AdvantageEstimator,
     _timer,
     apply_invalid_action_penalty,
     apply_kl_penalty,
@@ -92,6 +94,7 @@ class SkillSDRayTrainer(RLSDRayTrainer):
 
         self.global_steps = 0
         self._load_checkpoint()
+        self._maybe_idle_align_val_envs()
 
         if self.val_reward_fn is not None and self.config.trainer.get("val_before_train", True):
             val_metrics = self._validate()
@@ -174,6 +177,10 @@ class SkillSDRayTrainer(RLSDRayTrainer):
                         teacher_log_probs, teacher_metrics = self._get_training_teacher_log_probs(batch)
                         batch.batch["teacher_log_probs"] = teacher_log_probs
                         metrics.update(teacher_metrics)
+                    judge_seconds = getattr(self, "_judge_seconds", None)
+                    if judge_seconds is not None:
+                        timing_raw["judge"] = judge_seconds
+                        self._judge_seconds = None
 
                     if self.use_reference_policy:
                         with _timer("ref", timing_raw):
@@ -228,6 +235,14 @@ class SkillSDRayTrainer(RLSDRayTrainer):
                             gigpo_enable_similarity=self.config.algorithm.gigpo.enable_similarity,
                             gigpo_similarity_thresh=self.config.algorithm.gigpo.similarity_thresh,
                         )
+                        length_adv_coef = float(self.config.reward_model.get("success_length_adv_coef", 0.0))
+                        if length_adv_coef > 0 and self.config.algorithm.adv_estimator == AdvantageEstimator.GRPO:
+                            length_metrics = core_algos.apply_task_relative_length_advantage(
+                                batch,
+                                coef=length_adv_coef,
+                                baseline=self._success_length_baseline,
+                            )
+                            metrics.update(length_metrics)
 
                         # ---- SkillSD: Do NOT replace advantages ----
                         # Advantages stay as standard GRPO sequence-level advantages.
@@ -301,23 +316,16 @@ class SkillSDRayTrainer(RLSDRayTrainer):
                         with _timer("update_actor", timing_raw):
                             batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
                             batch.meta_info["sdl_coef"] = current_sdl_lambda
+                            batch.meta_info["global_steps"] = self.global_steps
+                            if getattr(self, "_pending_ana_pg", None) is not None:
+                                batch.meta_info["accumulate_only"] = True
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
+                        metrics.update(self._maybe_update_ana_policy())
 
-                    rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
-                    if rollout_data_dir:
-                        with _timer("dump_rollout_generations", timing_raw):
-                            inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
-                            outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
-                            scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
-                            self._dump_generations(
-                                inputs=inputs,
-                                outputs=outputs,
-                                scores=scores,
-                                reward_extra_infos_dict=reward_extra_infos_dict,
-                                dump_path=rollout_data_dir,
-                            )
+                    with _timer("dump_rollout_generations", timing_raw):
+                        self._dump_train_trajectories(batch, reward_extra_infos_dict, is_last_step)
 
                     test_start_step = self.config.trainer.get("test_start_step", 0)
                     if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and (is_last_step or (self.global_steps >= test_start_step and self.global_steps % self.config.trainer.test_freq == 0)):

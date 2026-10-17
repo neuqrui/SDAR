@@ -174,6 +174,110 @@ def compute_grpo_outcome_advantage(
     return scores, scores
 
 
+def relative_length_scores(episodes: list[dict], baseline: dict[str, float], ema_decay: float = 0.9) -> list[float]:
+    """Task-relative efficiency in [-1, 1]. Failures stay 0.
+
+    Two or more successes in a group are compared with the leave-one-out mean
+    length of the other successes. A lone success is compared with that task's
+    earlier successful lengths. The first success of a task has no baseline yet.
+    ``baseline`` is updated after the scores are computed.
+    """
+    grouped = defaultdict(list)
+    for index, episode in enumerate(episodes):
+        grouped[episode["group"]].append(index)
+    scores = [0.0] * len(episodes)
+    for indexes in grouped.values():
+        successes = [index for index in indexes if episodes[index]["success"] and episodes[index]["length"] > 0]
+        if len(successes) >= 2:
+            total = sum(episodes[index]["length"] for index in successes)
+            for index in successes:
+                others = (total - episodes[index]["length"]) / (len(successes) - 1)
+                if others > 0:
+                    gap = (others - episodes[index]["length"]) / others
+                    scores[index] = max(-1.0, min(1.0, gap))
+        elif len(successes) == 1:
+            index = successes[0]
+            previous = baseline.get(episodes[index]["task_key"])
+            if previous:
+                gap = (previous - episodes[index]["length"]) / previous
+                scores[index] = max(-1.0, min(1.0, gap))
+    observed: dict[str, list[float]] = defaultdict(list)
+    for episode in episodes:
+        if episode["success"] and episode["length"] > 0 and episode["task_key"]:
+            observed[episode["task_key"]].append(episode["length"])
+    decay = float(ema_decay)
+    for task_key, lengths in observed.items():
+        current = sum(lengths) / len(lengths)
+        previous = baseline.get(task_key)
+        baseline[task_key] = current if previous is None else decay * previous + (1.0 - decay) * current
+    return scores
+
+
+def apply_task_relative_length_advantage(data, coef: float, baseline: dict[str, float], ema_decay: float = 0.9) -> dict:
+    """Add a length advantage after GRPO normalization. Outcome reward is unchanged."""
+    import hashlib
+
+    coef = float(coef)
+    if coef == 0.0:
+        return {}
+    required = ("episode_lengths", "episode_rewards", "uid", "traj_uid", "turn_step")
+    if any(key not in data.non_tensor_batch for key in required):
+        return {}
+    if "advantages" not in data.batch or "prompts" not in data.batch:
+        return {}
+
+    lengths = data.non_tensor_batch["episode_lengths"]
+    rewards = data.non_tensor_batch["episode_rewards"]
+    groups = data.non_tensor_batch["uid"]
+    traj_uids = data.non_tensor_batch["traj_uid"]
+    turn_steps = data.non_tensor_batch["turn_step"]
+    prompt_length = data.batch["prompts"].shape[-1]
+    attention = data.batch["attention_mask"][:, :prompt_length]
+    prompts = data.batch["prompts"]
+
+    order = []
+    by_traj = {}
+    for row, traj_uid in enumerate(traj_uids):
+        if traj_uid not in by_traj:
+            by_traj[traj_uid] = {
+                "group": groups[row],
+                "length": float(lengths[row]),
+                "success": float(rewards[row]) > 0,
+                "task_key": "",
+                "rows": [],
+            }
+            order.append(traj_uid)
+        episode = by_traj[traj_uid]
+        episode["rows"].append(row)
+        if int(turn_steps[row]) == 0 and not episode["task_key"]:
+            valid = attention[row].bool()
+            token_ids = prompts[row, valid].detach().cpu().numpy().astype(np.int64)
+            episode["task_key"] = hashlib.sha256(token_ids.tobytes()).hexdigest()[:20]
+
+    episodes = [by_traj[traj_uid] for traj_uid in order]
+    scores = relative_length_scores(episodes, baseline, ema_decay=ema_decay)
+    response_mask = data.batch["response_mask"]
+    advantages = data.batch["advantages"]
+    returns = data.batch["returns"]
+    applied = []
+    for episode, score in zip(episodes, scores):
+        if not score:
+            continue
+        delta = coef * score
+        applied.append(abs(score))
+        for row in episode["rows"]:
+            advantages[row] = advantages[row] + delta * response_mask[row]
+            returns[row] = returns[row] + delta * response_mask[row]
+    successes = [episode for episode in episodes if episode["success"]]
+    lone = [episode for episode in successes if sum(1 for other in episodes if other["group"] == episode["group"] and other["success"]) == 1]
+    return {
+        "length_adv/mean_abs_score": float(sum(applied) / len(applied)) if applied else 0.0,
+        "length_adv/successes": float(len(successes)),
+        "length_adv/lone_success": float(len(lone)),
+        "length_adv/tasks_with_baseline": float(len(baseline)),
+    }
+
+
 def compute_grpo_passk_outcome_advantage(
     token_level_rewards: torch.Tensor,
     response_mask: torch.Tensor,

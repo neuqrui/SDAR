@@ -83,7 +83,7 @@ class AlfworldWorker:
         return image
 
 class AlfworldEnvs(gym.Env):
-    def __init__(self, alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs={}):
+    def __init__(self, alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs={}, game_file_groups=None):
         super().__init__()
         
         # Initialize Ray if not already initialized
@@ -98,10 +98,19 @@ class AlfworldEnvs(gym.Env):
         self.num_processes = env_num * group_n
         self.group_n = group_n
 
-        # Create Ray remote actors instead of processes
+        # Create Ray remote actors instead of processes.
+        # game_file_groups gives each worker its own fixed pool. The worker
+        # pickles base_env at remote() time, so the list must be set first.
+        if game_file_groups is not None and len(game_file_groups) != self.num_processes:
+            raise ValueError(
+                f"game_file_groups has {len(game_file_groups)} pools, expected {self.num_processes}"
+            )
         env_worker = ray.remote(**resources_per_worker)(AlfworldWorker)
         self.workers = []
         for i in range(self.num_processes):
+            if game_file_groups is not None:
+                base_env.game_files = list(game_file_groups[i])
+                base_env.num_games = len(base_env.game_files)
             worker = env_worker.remote(config, seed + (i // self.group_n), base_env)
             self.workers.append(worker)
 

@@ -50,8 +50,10 @@ class SkillProvider:
         # task_keywords: ordered dict of task_type -> list of keywords (all must match)
         self.task_keywords: Dict[str, List[str]] = self.skill_mapping.get("task_keywords", {})
 
-        if self.skill_all:
-            self._all_skills_text = self._build_all_skills_text()
+        self._all_skill_names = ["general_skills"] + [
+            name for name in self.skill_contents.keys() if name != "general_skills"
+        ]
+        self._all_skills_text = self._build_all_skills_text()
 
     def _build_all_skills_text(self) -> str:
         """Concatenate general_skills + all task-specific skills."""
@@ -61,6 +63,14 @@ class SkillProvider:
             if skill_name != "general_skills":
                 parts.append(content)
         return "\n\n".join(parts)
+
+    def _pack(self, matched_tasks: List[str], selected_skills: List[str], skill_text: str) -> dict:
+        return {
+            "matched_tasks": list(matched_tasks),
+            "selected_skills": list(selected_skills),
+            "skill_text": skill_text,
+            "skill_all": bool(self.skill_all),
+        }
 
     def _get_skill_text(self, task_type: Optional[str]) -> str:
         """Assemble general_skills + task-specific skill text."""
@@ -72,18 +82,38 @@ class SkillProvider:
                 parts.append(self.skill_contents[mapped_name])
         return "\n\n".join(parts)
 
-    def get_privileged_info(self, gamefile: str) -> str:
-        """Return skills for a gamefile path (task type appears as substring)."""
+    def _skills_for_tasks(self, matched_tasks: List[str]) -> dict:
         if self.skill_all:
-            return self._all_skills_text
+            return self._pack(
+                matched_tasks=matched_tasks or ["*"],
+                selected_skills=self._all_skill_names,
+                skill_text=self._all_skills_text,
+            )
+        if not matched_tasks:
+            return self._pack(
+                matched_tasks=[],
+                selected_skills=["general_skills"],
+                skill_text=self._get_skill_text(None),
+            )
+        general = self.skill_contents.get("general_skills", "")
+        parts = [general]
+        selected = ["general_skills"]
+        for task_type in matched_tasks:
+            mapped_name = self.task_to_skill.get(task_type)
+            if mapped_name and mapped_name in self.skill_contents and mapped_name not in selected:
+                parts.append(self.skill_contents[mapped_name])
+                selected.append(mapped_name)
+        return self._pack(matched_tasks=matched_tasks, selected_skills=selected, skill_text="\n\n".join(parts))
+
+    def resolve_from_gamefile(self, gamefile: str) -> dict:
         matched_task = None
         for task_type in self.task_to_skill:
             if task_type in gamefile:
                 matched_task = task_type
                 break
-        return self._get_skill_text(matched_task)
+        return self._skills_for_tasks([matched_task] if matched_task else [])
 
-    def get_privileged_info_from_prompt(self, prompt_text: str) -> str:
+    def resolve_from_prompt(self, prompt_text: str) -> dict:
         """Infer task type from prompt text using keyword rules from skill_mapping.json.
 
         Uses ``any`` matching: a task type is matched if ANY of its keywords
@@ -91,37 +121,18 @@ class SkillProvider:
         skill texts are concatenated (general_skills is included only once).
         """
         if self.skill_all:
-            return self._all_skills_text
+            return self._skills_for_tasks(["*"])
         text_lower = prompt_text.lower()
         matched_tasks = []
         for task_type, keywords in self.task_keywords.items():
             if keywords and any(kw in text_lower for kw in keywords):
                 matched_tasks.append(task_type)
+        return self._skills_for_tasks(matched_tasks)
 
-        if not matched_tasks:
-            return self._get_skill_text(None)
-
-        general = self.skill_contents.get("general_skills", "")
-        parts = [general]
-        for task_type in matched_tasks:
-            mapped_name = self.task_to_skill.get(task_type)
-            if mapped_name and mapped_name in self.skill_contents:
-                parts.append(self.skill_contents[mapped_name])
-        return "\n\n".join(parts)
-
-    def get_privileged_info_from_data_source(self, data_source: str, prompt_text: str) -> str:
-        """Infer task type using data_source field and prompt content.
-
-        Matching rules:
-          - data_source == 'popqa' -> entity_attribute_lookup
-          - data_source in ('nq', 'triviaqa') -> direct_retrieval
-          - prompt contains 'which' + 'or' (without 'for') -> compare
-          - data_source == 'hotpotqa' -> multi_hop_reasoning
-          - data_source == 'text' (AlfWorld/Webshop parquet) -> prompt keyword matching
-          - otherwise -> general skills only (unknown)
-        """
+    def resolve_from_data_source(self, data_source: str, prompt_text: str) -> dict:
+        """Infer task type using data_source field and prompt content."""
         if self.skill_all:
-            return self._all_skills_text
+            return self._skills_for_tasks(["*"])
 
         task_type = None
         if data_source == "popqa":
@@ -138,8 +149,34 @@ class SkillProvider:
                 task_type = "multi_hop_reasoning"
 
         if task_type is None and data_source == "text":
-            return self.get_privileged_info_from_prompt(prompt_text)
-        return self._get_skill_text(task_type)
+            return self.resolve_from_prompt(prompt_text)
+        return self._skills_for_tasks([task_type] if task_type else [])
+
+    def resolve(
+        self,
+        *,
+        gamefile: Optional[str] = None,
+        data_source: Optional[str] = None,
+        prompt_text: str = "",
+    ) -> dict:
+        """Unified skill resolution used by teacher batch construction / dumps."""
+        if gamefile:
+            return self.resolve_from_gamefile(gamefile)
+        if data_source is not None:
+            return self.resolve_from_data_source(data_source, prompt_text)
+        return self.resolve_from_prompt(prompt_text)
+
+    def get_privileged_info(self, gamefile: str) -> str:
+        """Return skills for a gamefile path (task type appears as substring)."""
+        return self.resolve_from_gamefile(gamefile)["skill_text"]
+
+    def get_privileged_info_from_prompt(self, prompt_text: str) -> str:
+        """Infer task type from prompt text using keyword rules from skill_mapping.json."""
+        return self.resolve_from_prompt(prompt_text)["skill_text"]
+
+    def get_privileged_info_from_data_source(self, data_source: str, prompt_text: str) -> str:
+        """Infer task type using data_source field and prompt content."""
+        return self.resolve_from_data_source(data_source, prompt_text)["skill_text"]
 
 
 def compute_rlsd_token_advantage(

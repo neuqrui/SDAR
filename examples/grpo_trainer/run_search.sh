@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TASK_KIND=SEARCH
+source "$PROJECT_ROOT/examples/_sdar_env.sh"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
@@ -19,7 +24,8 @@ export no_proxy=localhost,127.0.0.1,0.0.0.0,10.0.0.0/8,172.16.0.0/12,192.168.0.0
 export grpc_proxy=""
 export RAY_INCLUDE_DASHBOARD=0
 export RAY_DASHBOARD_AGENT_CHECK_PARENT_INTERVAL_S=30
-export WANDB_API_KEY=your_key_here
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+# wandb replaced by swanlab; see .env SWANLAB_API_KEY
 
 export HIGHLIGHT_CONFIGS='<search>:0,0,255;</search>:0,0,255;<information>:255,0,0;</information>:255,0,0'
 
@@ -50,8 +56,8 @@ train_data_size=128
 val_data_size=512
 group_size=8
 
-TRAIN_DATA="$HOME/data/searchR1_processed_direct/train.parquet"
-VAL_DATA="$HOME/data/searchR1_processed_direct/test.parquet"
+TRAIN_DATA="$SEARCH_PROCESSED_ROOT/train.parquet"
+VAL_DATA="$SEARCH_PROCESSED_ROOT/test.parquet"
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -64,7 +70,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='left' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen2.5-3B-Instruct \
+    actor_rollout_ref.model.path=$MODEL_PATH \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.optim.lr_warmup_steps_ratio=0.1 \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -95,7 +101,7 @@ python3 -m verl.trainer.main_ppo \
     env.history_length=4 \
     env.search.search_url='http://0.0.0.0:8000/retrieve' \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console','swanlab'] \
     trainer.project_name='verl_agent_search' \
     trainer.experiment_name='grpo_qwen2.5_3b_instruct' \
     trainer.n_gpus_per_node=4 \

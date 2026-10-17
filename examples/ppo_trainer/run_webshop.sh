@@ -61,7 +61,7 @@ python3 -m verl.trainer.main_ppo \
     env.max_steps=15 \
     env.resources_per_worker.num_cpus=$num_cpus_per_env_worker \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console','swanlab'] \
     trainer.project_name='verl_agent_webshopv1' \
     trainer.experiment_name='ppo_qwen2.5_1.5b' \
     trainer.n_gpus_per_node=2 \
