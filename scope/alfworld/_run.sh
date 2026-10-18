@@ -12,7 +12,6 @@ source "$PROJECT_ROOT/scope/env.sh"
 
 : "${SCOPE_TASK:=alfworld}"
 : "${SCOPE_MODEL_TAG:?set SCOPE_MODEL_TAG}"
-export OPSD_ADV_CLIP="${OPSD_ADV_CLIP:-1}"
 SCOPE_SFT_DIR="${SCOPE_SFT_DIR:-$SCOPE_SFT_ROOT/${SCOPE_TASK}_${SCOPE_MODEL_TAG}}"
 scope_init_method
 
@@ -31,7 +30,7 @@ val_data_size=128
 group_size=8
 skill_all=false
 ana_max_prompt_length=28672
-ana_max_completion_tokens=512
+ana_max_completion_tokens=1024
 ana_max_model_len=$((ana_max_prompt_length + ana_max_completion_tokens))
 model_path="$(scope_latest_sft "$SCOPE_SFT_DIR")"
 

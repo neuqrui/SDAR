@@ -489,7 +489,7 @@ class RLSDRayTrainer(RayPPOTrainer):
         if str(cfg.get("ana_backend", "policy_vllm")) != "policy_vllm":
             return
         context_length = int(cfg.get("ana_max_prompt_length", 16384))
-        completion_tokens = int(cfg.get("ana_max_completion_tokens", 4096))
+        completion_tokens = int(cfg.get("ana_max_completion_tokens", 1024))
         required = context_length + completion_tokens
         rollout = self.config.actor_rollout_ref.rollout
         configured = rollout.get("max_model_len", None)
@@ -881,14 +881,7 @@ class RLSDRayTrainer(RayPPOTrainer):
         success_eps = [episode for episode in episodes if episode["success"]]
         failure_eps = [episode for episode in episodes if not episode["success"]]
         max_prompt_length = int(cfg.get("ana_max_prompt_length", 16384))
-        requested_tokens = int(cfg.get("ana_max_completion_tokens", 512))
-        response_cap = int(self.config.data.max_response_length)
-        max_tokens = min(requested_tokens, response_cap)
-        if requested_tokens > response_cap:
-            print(
-                f"[SDAR][step_skill] ana completion capped at response length {response_cap} "
-                f"(requested {requested_tokens})"
-            )
+        max_tokens = int(cfg.get("ana_max_completion_tokens", 1024))
 
         loss_mode = str(cfg.get("ana_loss_mode", "pg")).lower()
         if loss_mode not in {"pg", "sft", "none"}:

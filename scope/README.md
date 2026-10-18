@@ -172,7 +172,7 @@ SFT_CUDA_VISIBLE_DEVICES=0,1 bash scope/sft/run_alfworld_3b.sh
 /data/qirui/SDAR/ckpt/sft/scope/alfworld_qwen2.5_3b/global_step_87
 ```
 
-`SCOPE_SFT_EPOCHS` 默认 3。
+`SCOPE_SFT_EPOCHS` 默认 3。Qwen3-1.7B 的三个 SFT 脚本默认 2 个 epoch；启动前导出 `SCOPE_SFT_EPOCHS` 可以改掉这个值。
 
 ## 3. RL
 
@@ -231,15 +231,15 @@ LENGTH_REWARD=adv bash scope/search/run_search_3b_step_skill.sh
 
 | 变量 | 默认 | 取值 |
 |---|---|---|
-| `OPSD_GATE` | `sdar` | `sdar`（或 `sdar-gate`）、`clip`、`tanh` |
-| `OPSD_GATE_BETA` | `5.0` | 只用于 `sdar` |
-| `OPSD_ADV_CLIP` | `10` | 只用于 `clip` 和 `tanh` |
+| `OPSD_GATE` | `tanh` | `sdar`（或 `sdar-gate`）、`clip`、`tanh` |
+| `OPSD_GATE_BETA` | `2.5` | `tanh` 和 `sdar` 都读取 |
+| `OPSD_ADV_CLIP` | `1` | 只用于 `clip` 和 `tanh` |
 | `LENGTH_REWARD` | `pairwise` | `pairwise`、`adv`、`bonus`、`none` |
 
 默认实验名：
 
 ```text
-scope_webshop_qwen2.5_3b_gatesdar_beta5.0_length_pairwise_step_skill
+scope_webshop_qwen2.5_3b_gatetanh_c1_length_pairwise_step_skill
 ```
 
 换成 clip 且 `OPSD_ADV_CLIP=10` 时，中间一段变为 `gateclip_c10`。不同 gate 因此落在不同 checkpoint 目录。

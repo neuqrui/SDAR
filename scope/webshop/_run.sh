@@ -23,13 +23,14 @@ if [[ ${#extra_args[@]} -gt 0 && "${extra_args[0]}" != *=* ]]; then
 fi
 num_cpus_per_env_worker=0.1
 max_steps=15
+history_length=2
 n_gpus="${N_GPUS_PER_NODE:-2}"
 train_data_size=16
 val_data_size=128
 group_size=8
 skill_all=false
 ana_max_prompt_length=16384
-ana_max_completion_tokens=512
+ana_max_completion_tokens=1024
 ana_max_model_len=$((ana_max_prompt_length + ana_max_completion_tokens))
 model_path="$(scope_latest_sft "$SCOPE_SFT_DIR")"
 
@@ -100,6 +101,7 @@ python3 -m verl.trainer.main_opsd_kl \
     +algorithm.opsd_kl.ana_loss_mode="$ana_loss_mode" \
     env.env_name=Webshop \
     env.seed=0 \
+    env.history_length="$history_length" \
     env.max_steps="$max_steps" \
     reward_model.success_length_bonus_coef="$success_length_bonus_coef" \
     reward_model.success_length_adv_coef="$success_length_adv_coef" \

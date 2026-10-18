@@ -72,9 +72,9 @@ skill_all=false
 # seed_ana: one episode skill inserted on every step. SKILL_SOURCE=seed_ana selects it.
 skill_source=${SKILL_SOURCE:-step_skill}
 ana_backend=policy_vllm
-# Student responses stay at 512, so the analyzer completion is capped there too.
+# Student responses stay at 512. The analyzer may write up to 1024 tokens.
 ana_max_prompt_length=28672
-ana_max_completion_tokens=512
+ana_max_completion_tokens=1024
 ana_max_model_len=$((ana_max_prompt_length + ana_max_completion_tokens))
 # Local Qwen3-32B vLLM. Unused while ana_loss_mode=none and ana_backend=policy_vllm.
 judge_base_url=${JUDGE_BASE_URL:-http://127.0.0.1:8101/v1}

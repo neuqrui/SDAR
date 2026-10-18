@@ -70,9 +70,9 @@ opsd_adv_clip=${OPSD_ADV_CLIP:-1}
 skill_all=false
 skill_source=${SKILL_SOURCE:-step_skill}
 ana_backend=policy_vllm
-# Student responses stay at 512, so the analyzer completion is capped there too.
+# Student responses stay at 512. The analyzer may write up to 1024 tokens.
 ana_max_prompt_length=16384
-ana_max_completion_tokens=512
+ana_max_completion_tokens=1024
 ana_max_model_len=$((ana_max_prompt_length + ana_max_completion_tokens))
 
 train_data_size=16

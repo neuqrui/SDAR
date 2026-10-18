@@ -20,7 +20,7 @@ skill_source=skill_bank
 ana_backend=policy_vllm
 # Same split as SEED WebShop: student prompts stay at 4096, vLLM context fits the analyzer.
 ana_max_prompt_length=16384
-ana_max_completion_tokens=4096
+ana_max_completion_tokens=1024
 ana_max_model_len=$((ana_max_prompt_length + ana_max_completion_tokens))
 
 train_data_size=16

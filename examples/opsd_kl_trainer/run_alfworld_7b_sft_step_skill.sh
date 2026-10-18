@@ -77,9 +77,9 @@ skill_all=false
 # step_skill: one skill shared by each target_steps group, OPSD only on those steps.
 skill_source=${SKILL_SOURCE:-step_skill}
 ana_backend=policy_vllm
-# Student responses stay at 512, so the analyzer completion is capped there too.
+# Student responses stay at 512. The analyzer may write up to 1024 tokens.
 ana_max_prompt_length=28672
-ana_max_completion_tokens=512
+ana_max_completion_tokens=1024
 ana_max_model_len=$((ana_max_prompt_length + ana_max_completion_tokens))
 
 train_data_size=16

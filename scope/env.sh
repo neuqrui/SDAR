@@ -45,8 +45,14 @@ scope_latest_sft() {
         echo "No global_step checkpoint with config.json under $save_dir" >&2
         return 1
     fi
-    if [[ "$step" -le 200 ]]; then
-        echo "Latest SFT checkpoint must be past step 200, got global_step_${step} under $save_dir" >&2
+    # Qwen3-1.7B SFT stops at 2 epochs (global_step_176 on the full analyzer set).
+    # Other models stay on 3 epochs, whose final step is past 200.
+    local min_step=200
+    if [[ "$save_dir" == *qwen3* ]]; then
+        min_step=150
+    fi
+    if [[ "$step" -le "$min_step" ]]; then
+        echo "Latest SFT checkpoint must be past step ${min_step}, got global_step_${step} under $save_dir" >&2
         return 1
     fi
     echo "$save_dir/global_step_${step}"
@@ -84,9 +90,10 @@ scope_init_method() {
 
     opsd_coef=0.01
     opsd_objective=sampled_kl
-    opsd_gate="${OPSD_GATE:-sdar}"
-    opsd_gate_beta="${OPSD_GATE_BETA:-5.0}"
-    opsd_adv_clip="${OPSD_ADV_CLIP:-10}"
+    # tanh(2.5 * gap), clipped to (-1, 1). Same defaults as run_webshop_7b_step_skill.sh.
+    opsd_gate="${OPSD_GATE:-tanh}"
+    opsd_gate_beta="${OPSD_GATE_BETA:-2.5}"
+    opsd_adv_clip="${OPSD_ADV_CLIP:-1}"
     skill_source=step_skill
     ana_loss_mode=none
     ana_backend=policy_vllm
