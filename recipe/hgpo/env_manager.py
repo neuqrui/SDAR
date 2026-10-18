@@ -597,6 +597,8 @@ def make_envs(config):
         raise ValueError("config.env.rollout.n should be an integer")
     group_n = config.env.rollout.n if config.env.rollout.n > 0 else 1
     resources_per_worker = OmegaConf.to_container(config.env.resources_per_worker, resolve=True)
+    from agent_system.environments.env_manager import _projection_requires_think
+    projection_require_think = _projection_requires_think(config)
 
     if "search" in config.env.env_name.lower():
         from agent_system.environments.env_package.search import build_search_envs, search_projection
@@ -639,7 +641,7 @@ def make_envs(config):
             env_kwargs = {
                 'eval_dataset': 'eval_in_distribution', # 'eval_in_distribution' or 'eval_out_of_distribution'
             }
-        projection_f = partial(alfworld_projection)
+        projection_f = partial(alfworld_projection, require_think=projection_require_think)
 
         if config.trainer.val_only:
             envs = None
@@ -659,7 +661,7 @@ def make_envs(config):
             'max_steps': config.env.max_steps,
             'search_depth': config.env.sokoban.search_depth
         }
-        projection_f = partial(sokoban_projection)
+        projection_f = partial(sokoban_projection, require_think=projection_require_think)
         if config.trainer.val_only:
             envs = None
         else:
@@ -685,7 +687,7 @@ def make_envs(config):
                     'file_path': file_path,
                     'attr_path': attr_path
                     }
-        projection_f = partial(webshop_projection)
+        projection_f = partial(webshop_projection, require_think=projection_require_think)
         if config.trainer.val_only:
             envs = None
         else:
@@ -698,7 +700,7 @@ def make_envs(config):
         return envs, val_envs
     elif "appworld" in config.env.env_name.lower():
         from agent_system.environments.env_package.appworld import build_appworld_envs, appworld_projection
-        projection_f = partial(appworld_projection)
+        projection_f = partial(appworld_projection, require_think=projection_require_think)
         if config.trainer.val_only:
             envs = None
         else:

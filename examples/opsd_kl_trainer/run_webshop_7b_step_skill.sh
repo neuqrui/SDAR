@@ -11,7 +11,7 @@ source "$PROJECT_ROOT/examples/_sdar_env.sh"
 export RAY_TMPDIR=/data/qirui/SDAR/tmp/ray_step_skill_7b
 mkdir -p "$RAY_TMPDIR"
 unset RAY_ADDRESS
-
+export CUDA_VISIBLE_DEVICES=0,1
 ENGINE=${1:-vllm}
 
 num_cpus_per_env_worker=0.1
@@ -20,7 +20,7 @@ max_steps=15
 # LENGTH_REWARD=adv      : task-relative length advantage after GRPO, coef 1. Episode reward stays 10 or 0.
 # LENGTH_REWARD=bonus    : add 5 * (max_steps - steps) / max_steps on successes only. A 1-step win is about 15.
 # LENGTH_REWARD=pairwise : soft pairwise efficiency, tau=0.1. Score is 10+5*b on successes, then GRPO.
-LENGTH_REWARD=${LENGTH_REWARD:-adv}
+LENGTH_REWARD=${LENGTH_REWARD:-pairwise}
 case "$LENGTH_REWARD" in
     none)
         success_length_adv_coef=0
@@ -59,9 +59,9 @@ ana_loss_mode=${ANA_LOSS_MODE:-none}
 opsd_objective=sampled_kl
 # none: every marked token has weight 1.
 # sdar: SEED/SDAR gate g = sigmoid(beta * stopgrad(log pi_T - log pi_S)), beta 5.0.
-opsd_gate=${OPSD_GATE:-sdar}
-opsd_gate_beta=${OPSD_GATE_BETA:-5.0}
-opsd_adv_clip=${OPSD_ADV_CLIP:-10}
+opsd_gate=${OPSD_GATE:-tanh}
+opsd_gate_beta=${OPSD_GATE_BETA:-2.5}
+opsd_adv_clip=${OPSD_ADV_CLIP:-1}
 skill_all=false
 # step_skill: one skill shared by each target_steps group, OPSD only on those steps.
 # seed_ana: one episode skill inserted on every step. SKILL_SOURCE=seed_ana selects it.
@@ -69,7 +69,7 @@ skill_source=${SKILL_SOURCE:-step_skill}
 ana_backend=policy_vllm
 # Student responses stay at 512, so the analyzer completion is capped there too.
 ana_max_prompt_length=16384
-ana_max_completion_tokens=512
+ana_max_completion_tokens=4096
 ana_max_model_len=$((ana_max_prompt_length + ana_max_completion_tokens))
 # Local Qwen3-32B vLLM on GPUs 2,3: tensor parallel 2, port 8101.
 judge_base_url=${JUDGE_BASE_URL:-http://127.0.0.1:8101/v1}
@@ -86,9 +86,13 @@ ana_api_top_p=0.95
 train_data_size=16
 val_data_size=128
 group_size=8
-# resume_mode=disable. Weights come from the 7B Instruct checkpoint, not MODEL_PATH.
-total_epochs=150
-model_path=Qwen/Qwen2.5-7B-Instruct
+# Analyzer SFT checkpoint (3 epochs, global_step_264).
+total_epochs=180
+model_path="${SFT_MODEL_PATH:-/data/qirui/SDAR/ckpt/sft/webshop_analyzer_qwen2.5_7b/global_step_264}"
+if [[ ! -f "$model_path/config.json" ]]; then
+    echo "Qwen2.5-7B SFT checkpoint not found: $model_path" >&2
+    exit 1
+fi
 case "$opsd_gate" in
     sdar|sdar-gate|sdar_gate)
         opsd_gate_tag="_gatesdar_beta${opsd_gate_beta}"
@@ -104,7 +108,7 @@ case "$opsd_gate" in
         exit 1
         ;;
 esac
-experiment_name="grpo_opsd_kl_qwen2.5_7b_coef${opsd_coef}_${opsd_objective}${opsd_gate_tag}_${skill_source}_${ana_loss_mode}_length_${LENGTH_REWARD}"
+experiment_name="grpo_opsd_kl_qwen2.5_7b_sft_coef${opsd_coef}_${opsd_objective}${opsd_gate_tag}_${skill_source}_${ana_loss_mode}_length_${LENGTH_REWARD}"
 # wandb replaced by swanlab; see .env SWANLAB_API_KEY
 
 python3 -m examples.data_preprocess.prepare \
