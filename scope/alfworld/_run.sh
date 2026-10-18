@@ -23,6 +23,7 @@ if [[ ${#extra_args[@]} -gt 0 && "${extra_args[0]}" != *=* ]]; then
 fi
 num_cpus_per_env_worker=0.1
 max_steps=50
+history_length=5
 n_gpus="${N_GPUS_PER_NODE:-8}"
 train_data_size=16
 val_data_size=128
@@ -98,6 +99,7 @@ python3 -m verl.trainer.main_opsd_kl \
     +algorithm.opsd_kl.ana_max_prompt_length="$ana_max_prompt_length" \
     +algorithm.opsd_kl.ana_max_completion_tokens="$ana_max_completion_tokens" \
     +algorithm.opsd_kl.ana_loss_mode="$ana_loss_mode" \
+    env.history_length="$history_length" \
     env.env_name=alfworld/AlfredTWEnv \
     env.seed=0 \
     env.max_steps="$max_steps" \

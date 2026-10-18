@@ -17,7 +17,10 @@ export OMP_NUM_THREADS=1
 ENGINE=${1:-vllm}
 export CUDA_VISIBLE_DEVICES=4,5,2,3
 num_cpus_per_env_worker=0.1
-max_steps=50
+# SEED's outcome term with step weight 0 is the same group mean/std normalization
+# as GRPO. main_opsd_kl does not build step_rewards, so adv_estimator stays grpo.
+max_steps=30
+history_length=5
 # LENGTH_REWARD=none     : episode reward stays 10 or 0.
 # LENGTH_REWARD=adv      : task-relative length advantage after GRPO, coef 1. Episode reward stays 10 or 0.
 # LENGTH_REWARD=bonus    : add 5 * (max_steps - steps) / max_steps on successes only.
@@ -67,8 +70,8 @@ opsd_objective=sampled_kl
 #   clip:             L = -clip(gap, -c, c) * log pi_S
 #   tanh:             L = -(c * tanh(beta * gap / c)) * log pi_S
 # c is OPSD_ADV_CLIP. Default tanh uses beta=2.5, c=1, so a = tanh(2.5 * gap) in (-1, 1).
-opsd_gate=${OPSD_GATE:-tanh}
-opsd_gate_beta=${OPSD_GATE_BETA:-2.5}
+opsd_gate=${OPSD_GATE:-sdar_gate}
+opsd_gate_beta=${OPSD_GATE_BETA:-5}
 opsd_adv_clip=${OPSD_ADV_CLIP:-1}
 skill_all=false
 # step_skill: one skill shared by each target_steps group, OPSD only on those steps.
@@ -122,20 +125,20 @@ python3 -m verl.trainer.main_opsd_kl \
     data.max_prompt_length=2048 \
     data.max_response_length=512 \
     data.filter_overlong_prompts=True \
-    data.truncation='error' \
+    data.truncation='left' \
     data.return_raw_chat=True \
     actor_rollout_ref.model.path=$model_path \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=128 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=256 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=32 \
     actor_rollout_ref.actor.use_kl_loss=True \
     actor_rollout_ref.actor.kl_loss_coef=0.01 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
     actor_rollout_ref.rollout.name=$ENGINE \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.5 \
@@ -145,7 +148,7 @@ python3 -m verl.trainer.main_opsd_kl \
     actor_rollout_ref.rollout.max_model_len=$ana_max_model_len \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.4 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.1 \
@@ -165,6 +168,7 @@ python3 -m verl.trainer.main_opsd_kl \
     +algorithm.opsd_kl.ana_loss_mode=$ana_loss_mode \
     +algorithm.opsd_kl.ana_alpha_pos=1 \
     +algorithm.opsd_kl.ana_alpha_neg=1 \
+    env.history_length=$history_length \
     env.env_name=alfworld/AlfredTWEnv \
     env.seed=0 \
     env.max_steps=$max_steps \
